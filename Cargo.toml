@@ -1,0 +1,15 @@
+[package]
+name = "rocket-raw-response"
+version = "0.1.0"
+authors = ["Magic Len <len@magiclen.org>"]
+repository = "https://github.com/magiclen/rocket-raw-response"
+homepage = "https://magiclen.org/rocket-raw-response"
+keywords = ["rocket", "server", "web", "response", "vec"]
+categories = ["web-programming"]
+description= "This crate provides a response struct used for responding raw data."
+readme = "README.md"
+license = "MIT"
+
+[dependencies]
+rocket = "0.3.16"
+mime_guess = "1.8.6"
