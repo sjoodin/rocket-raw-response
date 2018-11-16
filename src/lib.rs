@@ -21,7 +21,7 @@ use mime::Mime;
 use rocket::response::{Response, Responder, Result};
 use rocket::request::Request;
 
-/// The response struct used for client downloading.
+/// The response struct used for responding raw data.
 pub struct RawResponse<'a> {
     pub data: Box<Read + 'a>,
     pub file_name: String,
