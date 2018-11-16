@@ -14,6 +14,7 @@ extern crate rocket;
 use std::io::{self, Read, ErrorKind, Cursor};
 use std::fs::{self, File};
 use std::path::Path;
+use std::fmt::{self, Debug, Formatter};
 
 use mime::Mime;
 
@@ -26,6 +27,12 @@ pub struct RawResponse<'a> {
     pub file_name: String,
     pub content_type: Option<Mime>,
     pub content_length: Option<u64>,
+}
+
+impl<'a> Debug for RawResponse<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.write_fmt(format_args!("RawResponse {{file_name: {:?}, content_type: {:?}, content_length: {:?}}}", self.file_name, self.content_type, self.content_length))
+    }
 }
 
 impl<'a> Responder<'a> for RawResponse<'a> {
