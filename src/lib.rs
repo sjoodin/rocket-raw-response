@@ -1,48 +1,57 @@
-//! # Raw Response for Rocket Framework
-//! This crate provides a response struct used for responding raw data.
+/*!
+# Raw Response for Rocket Framework
 
+This crate provides a response struct used for responding raw data.
+
+See `examples`.
+*/
+
+pub extern crate mime;
 extern crate mime_guess;
+extern crate percent_encoding;
 extern crate rocket;
 
 use std::io::{self, Read, ErrorKind, Cursor};
 use std::fs::{self, File};
 use std::path::Path;
 
-use mime_guess::get_mime_type_str;
+use mime::Mime;
 
-use rocket::response::{self, Response, Responder};
+use rocket::response::{Response, Responder, Result};
 use rocket::request::Request;
 
-const RESPONSE_CHUNK_SIZE: u64 = 4096;
-
-/// The response struct used for responding raw data.
-pub struct RawResponse {
-    pub data: Box<Read>,
-    pub content_type: Option<String>,
+/// The response struct used for client downloading.
+pub struct RawResponse<'a> {
+    pub data: Box<Read + 'a>,
+    pub file_name: String,
+    pub content_type: Option<Mime>,
     pub content_length: Option<u64>,
 }
 
-impl<'a> Responder<'a> for RawResponse {
-    fn respond_to(self, _: &Request) -> response::Result<'a> {
+impl<'a> Responder<'a> for RawResponse<'a> {
+    fn respond_to(self, _: &Request) -> Result<'a> {
         let mut response = Response::build();
 
+        response
+            .raw_header("Content-Disposition", format!("inline; filename*=UTF-8''{}", percent_encoding::percent_encode(self.file_name.as_bytes(), percent_encoding::QUERY_ENCODE_SET)));
+
         if let Some(content_type) = self.content_type {
-            response.raw_header("Content-Type", content_type);
+            response.raw_header("Content-Type", content_type.to_string());
         }
 
         if let Some(content_length) = self.content_length {
             response.raw_header("Content-Length", content_length.to_string());
         }
 
-        response.chunked_body(self.data, RESPONSE_CHUNK_SIZE);
+        response.streamed_body(self.data);
 
         response.ok()
     }
 }
 
-impl RawResponse {
-    /// Create a RawResponse instance from a path of a file.
-    pub fn from_file<P: AsRef<Path>>(path: P) -> io::Result<RawResponse> {
+impl<'a> RawResponse<'a> {
+    /// Create a `RawResponse` instance from a path of a file.
+    pub fn from_file<P: AsRef<Path>, S: Into<String>>(path: P, file_name: Option<S>, content_type: Option<Mime>) -> io::Result<RawResponse<'a>> {
         let path = path.as_ref();
 
         if !path.exists() {
@@ -53,6 +62,16 @@ impl RawResponse {
             return Err(io::Error::from(ErrorKind::InvalidInput));
         }
 
+        let file_name = match file_name {
+            Some(file_name) => {
+                let file_name = file_name.into();
+                file_name
+            }
+            None => {
+                path.file_name().unwrap().to_str().unwrap().to_string()
+            }
+        };
+
         let file_size = match fs::metadata(&path) {
             Ok(metadata) => {
                 Some(metadata.len())
@@ -60,37 +79,49 @@ impl RawResponse {
             Err(e) => return Err(e)
         };
 
-        let content_type = match path.extension() {
-            Some(extension) => {
-                get_mime_type_str(&extension.to_str().unwrap().to_lowercase()).map(|t| { String::from(t) })
+        let content_type = match content_type {
+            Some(content_type) => content_type,
+            None => match path.extension() {
+                Some(extension) => {
+                    mime_guess::get_mime_type(extension.to_str().unwrap())
+                }
+                None => mime::APPLICATION_OCTET_STREAM
             }
-            None => None
         };
 
         let data = Box::from(File::open(&path)?);
 
         Ok(RawResponse {
             data,
-            content_type,
+            file_name,
+            content_type: Some(content_type),
             content_length: file_size,
         })
     }
 
-    /// Create a RawResponse instance from a Vec<u8> instance.
-    pub fn from_bytes<S: AsRef<str>>(data: Vec<u8>, content_type: Option<S>) -> io::Result<RawResponse> {
-        let content_length = data.len();
+    /// Create a `RawResponse` instance from a Vec<u8>.
+    pub fn from_vec<S: Into<String>>(vec: Vec<u8>, file_name: S, content_type: Option<Mime>) -> io::Result<RawResponse<'a>> {
+        let file_name = file_name.into();
 
-        let content_type = match content_type {
-            Some(s) => Some(s.as_ref().to_string()),
-            None => None
-        };
-
-        let data = Box::from(Cursor::new(data));
+        let content_length = vec.len();
 
         Ok(RawResponse {
-            data,
+            data: Box::from(Cursor::new(vec)),
+            file_name,
             content_type,
             content_length: Some(content_length as u64),
+        })
+    }
+
+    /// Create a `RawResponse` instance from a reader.
+    pub fn from_reader<R: Read + 'a, S: Into<String>>(reader: R, file_name: S, content_type: Option<Mime>, content_length: Option<u64>) -> io::Result<RawResponse<'a>> {
+        let file_name = file_name.into();
+
+        Ok(RawResponse {
+            data: Box::from(reader),
+            file_name,
+            content_type,
+            content_length,
         })
     }
 }

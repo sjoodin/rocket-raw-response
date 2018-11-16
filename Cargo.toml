@@ -1,6 +1,6 @@
 [package]
 name = "rocket-raw-response"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Magic Len <len@magiclen.org>"]
 repository = "https://github.com/magiclen/rocket-raw-response"
 homepage = "https://magiclen.org/rocket-raw-response"
@@ -10,6 +10,14 @@ description= "This crate provides a response struct used for responding raw data
 readme = "README.md"
 license = "MIT"
 
+[badges]
+travis-ci = { repository = "magiclen/rocket-raw-response", branch = "master" }
+
 [dependencies]
-rocket = "0.3.16"
-mime_guess = "1.8.6"
+rocket = ">=0.3.16"
+mime = "0.3.12"
+mime_guess = " 2.0.0-alpha.6"
+percent-encoding = "1.0.1"
+
+[dev-dependencies]
+rocket_codegen = ">=0.3.16"
