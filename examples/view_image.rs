@@ -10,10 +10,10 @@ use std::path::Path;
 use rocket_raw_response::RawResponse;
 
 #[get("/")]
-fn view() -> RawResponse<'static> {
+fn view() -> RawResponse {
     let path = Path::join(Path::new("examples"), Path::join(Path::new("images"), "image(貓).jpg"));
 
-    RawResponse::from_file(path, None::<String>, None).unwrap()
+    RawResponse::from_file(path, None::<String>, None)
 }
 
 fn main() {
