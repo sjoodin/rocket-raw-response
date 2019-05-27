@@ -13,7 +13,7 @@ extern crate rocket;
 #[macro_use]
 extern crate derivative;
 
-use std::io::{Read, Cursor};
+use std::io::{Read, Cursor, ErrorKind};
 use std::fs::File;
 use std::path::Path;
 use std::rc::Rc;
@@ -150,11 +150,13 @@ impl<'a> Responder<'a> for RawResponse {
                     }
                 }
 
-                let metadata = path.metadata().map_err(|_| Status::InternalServerError)?;
+                let file = File::open(path).map_err(|err| if err.kind() == ErrorKind::NotFound {
+                    Status::NotFound
+                } else {
+                    Status::InternalServerError
+                })?;
 
-                response.raw_header("Content-Length", metadata.len().to_string());
-
-                response.streamed_body(File::open(path).map_err(|_| Status::InternalServerError)?);
+                response.sized_body(file);
             }
         }
 
