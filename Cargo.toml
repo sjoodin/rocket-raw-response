@@ -1,6 +1,6 @@
 [package]
 name = "rocket-raw-response"
-version = "0.4.6"
+version = "0.4.7"
 authors = ["Magic Len <len@magiclen.org>"]
 repository = "https://github.com/magiclen/rocket-raw-response"
 homepage = "https://magiclen.org/rocket-raw-response"
@@ -16,8 +16,8 @@ branch = "master"
 
 [dependencies]
 rocket = "0.4.2"
-mime = "0.3.12"
-mime_guess = " 2.0.0-alpha.6"
+mime = "0.3.13"
+mime_guess = " 2.0.0"
 percent-encoding = "1.0.1"
 
 [dependencies.educe]

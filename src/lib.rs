@@ -143,7 +143,7 @@ impl<'a> Responder<'a> for RawResponse {
                 } else {
                     if let Some(extension) = path.extension() {
                         if let Some(extension) = extension.to_str() {
-                            let content_type = mime_guess::get_mime_type(extension);
+                            let content_type = mime_guess::from_ext(extension).first_or_octet_stream();
 
                             response.raw_header("Content-Type", content_type.to_string());
                         }
