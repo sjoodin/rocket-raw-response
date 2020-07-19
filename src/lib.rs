@@ -35,6 +35,7 @@ const PATH_PERCENT_ENCODE_SET: &AsciiSet =
 #[derive(Educe)]
 #[educe(Debug)]
 enum RawResponseData {
+    Static(&'static [u8]),
     Vec(Vec<u8>),
     Reader {
         #[educe(Debug(ignore))]
@@ -52,6 +53,23 @@ pub struct RawResponse {
 }
 
 impl RawResponse {
+    /// Create a `RawResponse` instance from a `&'static [u8]`.
+    pub fn from_static<S: Into<String>>(
+        data: &'static [u8],
+        file_name: Option<S>,
+        content_type: Option<Mime>,
+    ) -> RawResponse {
+        let file_name = file_name.map(|file_name| file_name.into());
+
+        let data = RawResponseData::Static(data);
+
+        RawResponse {
+            file_name,
+            content_type,
+            data,
+        }
+    }
+
     /// Create a `RawResponse` instance from a `Vec<u8>`.
     pub fn from_vec<S: Into<String>>(
         vec: Vec<u8>,
@@ -141,6 +159,12 @@ impl<'a> Responder<'a> for RawResponse {
         let mut response = Response::build();
 
         match self.data {
+            RawResponseData::Static(data) => {
+                file_name!(self, response);
+                content_type!(self, response);
+
+                response.sized_body(Cursor::new(data));
+            }
             RawResponseData::Vec(data) => {
                 file_name!(self, response);
                 content_type!(self, response);
