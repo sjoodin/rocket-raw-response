@@ -8,62 +8,58 @@ See `examples`.
 
 pub extern crate mime;
 extern crate mime_guess;
-extern crate percent_encoding;
 extern crate rocket;
+extern crate url_escape;
 #[macro_use]
 extern crate educe;
 
-use std::fs::File;
-use std::io::{Cursor, ErrorKind, Read};
+use std::io::{self, Cursor};
+use std::marker::Unpin;
 use std::path::Path;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use mime::Mime;
 
-use rocket::http::Status;
 use rocket::request::Request;
 use rocket::response::{self, Responder, Response};
 
-use percent_encoding::{AsciiSet, CONTROLS};
-
-const FRAGMENT_PERCENT_ENCODE_SET: &AsciiSet =
-    &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
-
-const PATH_PERCENT_ENCODE_SET: &AsciiSet =
-    &FRAGMENT_PERCENT_ENCODE_SET.add(b'#').add(b'?').add(b'{').add(b'}');
+use rocket::tokio::fs::File as AsyncFile;
+use rocket::tokio::io::AsyncRead;
 
 #[derive(Educe)]
 #[educe(Debug)]
-enum RawResponseData {
-    Static(&'static [u8]),
+enum RawResponseData<'o> {
+    Slice(&'o [u8]),
     Vec(Vec<u8>),
     Reader {
         #[educe(Debug(ignore))]
-        data: Box<dyn Read + 'static>,
+        data: Box<dyn AsyncRead + Send + Unpin + 'o>,
         content_length: Option<u64>,
     },
-    File(Rc<Path>),
+    File(Arc<Path>, AsyncFile),
 }
+
+pub type RawResponse = RawResponsePro<'static>;
 
 #[derive(Debug)]
-pub struct RawResponse {
+pub struct RawResponsePro<'o> {
     file_name: Option<String>,
     content_type: Option<Mime>,
-    data: RawResponseData,
+    data: RawResponseData<'o>,
 }
 
-impl RawResponse {
-    /// Create a `RawResponse` instance from a `&'static [u8]`.
-    pub fn from_static<S: Into<String>>(
-        data: &'static [u8],
+impl<'o> RawResponsePro<'o> {
+    /// Create a `RawResponse` instance from a `&'o [u8]`.
+    pub fn from_slice<S: Into<String>>(
+        data: &'o [u8],
         file_name: Option<S>,
         content_type: Option<Mime>,
-    ) -> RawResponse {
+    ) -> RawResponsePro<'o> {
         let file_name = file_name.map(|file_name| file_name.into());
 
-        let data = RawResponseData::Static(data);
+        let data = RawResponseData::Slice(data);
 
-        RawResponse {
+        RawResponsePro {
             file_name,
             content_type,
             data,
@@ -75,12 +71,12 @@ impl RawResponse {
         vec: Vec<u8>,
         file_name: Option<S>,
         content_type: Option<Mime>,
-    ) -> RawResponse {
+    ) -> RawResponsePro<'o> {
         let file_name = file_name.map(|file_name| file_name.into());
 
         let data = RawResponseData::Vec(vec);
 
-        RawResponse {
+        RawResponsePro {
             file_name,
             content_type,
             data,
@@ -88,12 +84,12 @@ impl RawResponse {
     }
 
     /// Create a `RawResponse` instance from a reader.
-    pub fn from_reader<R: Read + 'static, S: Into<String>>(
+    pub fn from_reader<R: AsyncRead + Send + Unpin + 'o, S: Into<String>>(
         reader: R,
         file_name: Option<S>,
         content_type: Option<Mime>,
         content_length: Option<u64>,
-    ) -> RawResponse {
+    ) -> RawResponsePro<'o> {
         let file_name = file_name.map(|file_name| file_name.into());
 
         let data = RawResponseData::Reader {
@@ -101,7 +97,7 @@ impl RawResponse {
             content_length,
         };
 
-        RawResponse {
+        RawResponsePro {
             file_name,
             content_type,
             data,
@@ -109,38 +105,38 @@ impl RawResponse {
     }
 
     /// Create a `RawResponse` instance from a path of a file.
-    pub fn from_file<P: Into<Rc<Path>>, S: Into<String>>(
+    pub async fn from_file<P: Into<Arc<Path>>, S: Into<String>>(
         path: P,
         file_name: Option<S>,
         content_type: Option<Mime>,
-    ) -> RawResponse {
+    ) -> Result<RawResponsePro<'o>, io::Error> {
         let path = path.into();
+
+        let file = AsyncFile::open(path.as_ref()).await?;
+
         let file_name = file_name.map(|file_name| file_name.into());
 
-        let data = RawResponseData::File(path);
+        let data = RawResponseData::File(path, file);
 
-        RawResponse {
+        Ok(RawResponsePro {
             file_name,
             content_type,
             data,
-        }
+        })
     }
 }
 
 macro_rules! file_name {
     ($s:expr, $res:expr) => {
         if let Some(file_name) = $s.file_name {
-            if !file_name.is_empty() {
-                $res.raw_header(
-                    "Content-Disposition",
-                    format!(
-                        "inline; filename*=UTF-8''{}",
-                        percent_encoding::percent_encode(
-                            file_name.as_bytes(),
-                            PATH_PERCENT_ENCODE_SET
-                        )
-                    ),
-                );
+            if file_name.is_empty() {
+                $res.raw_header("Content-Disposition", "inline");
+            } else {
+                let mut v = String::from("inline; filename*=UTF-8''");
+
+                url_escape::encode_component_to_string(file_name, &mut v);
+
+                $res.raw_header("Content-Disposition", v);
             }
         }
     };
@@ -154,22 +150,22 @@ macro_rules! content_type {
     };
 }
 
-impl<'a> Responder<'a> for RawResponse {
-    fn respond_to(self, _: &Request) -> response::Result<'a> {
+impl<'r, 'o: 'r> Responder<'r, 'o> for RawResponsePro<'o> {
+    fn respond_to(self, _: &'r Request<'_>) -> response::Result<'o> {
         let mut response = Response::build();
 
         match self.data {
-            RawResponseData::Static(data) => {
+            RawResponseData::Slice(data) => {
                 file_name!(self, response);
                 content_type!(self, response);
 
-                response.sized_body(Cursor::new(data));
+                response.sized_body(data.len(), Cursor::new(data));
             }
             RawResponseData::Vec(data) => {
                 file_name!(self, response);
                 content_type!(self, response);
 
-                response.sized_body(Cursor::new(data));
+                response.sized_body(data.len(), Cursor::new(data));
             }
             RawResponseData::Reader {
                 data,
@@ -184,33 +180,27 @@ impl<'a> Responder<'a> for RawResponse {
 
                 response.streamed_body(data);
             }
-            RawResponseData::File(path) => {
+            RawResponseData::File(path, file) => {
                 if let Some(file_name) = self.file_name {
-                    if !file_name.is_empty() {
-                        response.raw_header(
-                            "Content-Disposition",
-                            format!(
-                                "inline; filename*=UTF-8''{}",
-                                percent_encoding::percent_encode(
-                                    file_name.as_bytes(),
-                                    PATH_PERCENT_ENCODE_SET
-                                )
-                            ),
-                        );
+                    if file_name.is_empty() {
+                        response.raw_header("Content-Disposition", "inline");
+                    } else {
+                        let mut v = String::from("inline; filename*=UTF-8''");
+
+                        url_escape::encode_component_to_string(file_name, &mut v);
+
+                        response.raw_header("Content-Disposition", v);
                     }
                 } else if let Some(file_name) =
                     path.file_name().map(|file_name| file_name.to_string_lossy())
                 {
-                    response.raw_header(
-                        "Content-Disposition",
-                        format!(
-                            "inline; filename*=UTF-8''{}",
-                            percent_encoding::percent_encode(
-                                file_name.as_bytes(),
-                                PATH_PERCENT_ENCODE_SET
-                            )
-                        ),
-                    );
+                    let mut v = String::from("inline; filename*=UTF-8''");
+
+                    url_escape::encode_component_to_string(file_name, &mut v);
+
+                    response.raw_header("Content-Disposition", v);
+                } else {
+                    response.raw_header("Content-Disposition", "inline");
                 }
 
                 if let Some(content_type) = self.content_type {
@@ -223,15 +213,7 @@ impl<'a> Responder<'a> for RawResponse {
                     }
                 }
 
-                let file = File::open(path).map_err(|err| {
-                    if err.kind() == ErrorKind::NotFound {
-                        Status::NotFound
-                    } else {
-                        Status::InternalServerError
-                    }
-                })?;
-
-                response.sized_body(file);
+                response.sized_body(None, file);
             }
         }
 

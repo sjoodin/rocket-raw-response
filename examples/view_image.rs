@@ -1,21 +1,29 @@
-#![feature(proc_macro_hygiene, decl_macro)]
-
 #[macro_use]
 extern crate rocket;
 
 extern crate rocket_raw_response;
 
+use std::io::ErrorKind;
 use std::path::Path;
+
+use rocket::http::Status;
 
 use rocket_raw_response::RawResponse;
 
 #[get("/")]
-fn view() -> RawResponse {
+async fn view() -> Result<RawResponse, Status> {
     let path = Path::join(Path::new("examples"), Path::join(Path::new("images"), "image(貓).jpg"));
 
-    RawResponse::from_file(path, None::<String>, None)
+    RawResponse::from_file(path, None::<String>, None).await.map_err(|err| {
+        if err.kind() == ErrorKind::NotFound {
+            Status::NotFound
+        } else {
+            Status::InternalServerError
+        }
+    })
 }
 
-fn main() {
-    rocket::ignite().mount("/", routes![view]).launch();
+#[launch]
+fn rocket() -> _ {
+    rocket::build().mount("/", routes![view])
 }
