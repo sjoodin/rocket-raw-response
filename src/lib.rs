@@ -13,6 +13,8 @@ extern crate url_escape;
 #[macro_use]
 extern crate educe;
 
+mod temp_file_async_reader;
+
 use std::io::{self, Cursor};
 use std::marker::Unpin;
 use std::path::Path;
@@ -20,11 +22,15 @@ use std::sync::Arc;
 
 use mime::Mime;
 
+use rocket::data::TempFile;
+use rocket::http::Status;
 use rocket::request::Request;
 use rocket::response::{self, Responder, Response};
 
 use rocket::tokio::fs::File as AsyncFile;
 use rocket::tokio::io::AsyncRead;
+
+use temp_file_async_reader::TempFileAsyncReader;
 
 #[derive(Educe)]
 #[educe(Debug)]
@@ -37,6 +43,7 @@ enum RawResponseData<'o> {
         content_length: Option<u64>,
     },
     File(Arc<Path>, AsyncFile),
+    TempFile(Box<TempFile<'o>>),
 }
 
 pub type RawResponse = RawResponsePro<'static>;
@@ -123,6 +130,23 @@ impl<'o> RawResponsePro<'o> {
             content_type,
             data,
         })
+    }
+
+    /// Create a `RawResponse` instance from a `TempFile`.
+    pub fn from_temp_file<S: Into<String>>(
+        temp_file: TempFile<'o>,
+        file_name: Option<S>,
+        content_type: Option<Mime>,
+    ) -> RawResponsePro<'o> {
+        let file_name = file_name.map(|file_name| file_name.into());
+
+        let data = RawResponseData::TempFile(Box::new(temp_file));
+
+        RawResponsePro {
+            file_name,
+            content_type,
+            data,
+        }
     }
 }
 
@@ -214,6 +238,50 @@ impl<'r, 'o: 'r> Responder<'r, 'o> for RawResponsePro<'o> {
                 }
 
                 response.sized_body(None, file);
+            }
+            RawResponseData::TempFile(file) => {
+                if let Some(file_name) = self.file_name {
+                    if file_name.is_empty() {
+                        response.raw_header("Content-Disposition", "inline");
+                    } else {
+                        let mut v = String::from("inline; filename*=UTF-8''");
+
+                        url_escape::encode_component_to_string(file_name, &mut v);
+
+                        response.raw_header("Content-Disposition", v);
+                    }
+                } else if let Some(file_name) = file.name() {
+                    if file_name.is_empty() {
+                        response.raw_header("Content-Disposition", "inline");
+                    } else {
+                        let mut v = String::from("attachment; filename*=UTF-8''");
+
+                        url_escape::encode_component_to_string(file_name, &mut v);
+
+                        response.raw_header("Content-Disposition", v);
+                    }
+                } else {
+                    response.raw_header("Content-Disposition", "inline");
+                }
+
+                if let Some(content_type) = self.content_type {
+                    response.raw_header("Content-Type", content_type.to_string());
+                } else if let Some(content_type) = file.content_type() {
+                    response.raw_header("Content-Type", content_type.to_string());
+                } else if let Some(extension) = file.name().map(Path::new).and_then(Path::extension)
+                {
+                    if let Some(extension) = extension.to_str() {
+                        let content_type = mime_guess::from_ext(extension).first_or_octet_stream();
+
+                        response.raw_header("Content-Type", content_type.to_string());
+                    }
+                }
+
+                response.raw_header("Content-Length", file.len().to_string());
+
+                response.streamed_body(
+                    TempFileAsyncReader::from(file).map_err(|_| Status::InternalServerError)?,
+                );
             }
         }
 
