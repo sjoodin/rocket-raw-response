@@ -1,8 +1,6 @@
 #[macro_use]
 extern crate rocket;
 
-extern crate rocket_raw_response;
-
 use std::io::ErrorKind;
 use std::path::Path;
 
