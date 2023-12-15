@@ -29,7 +29,10 @@ use rocket::{
     response::{self, Responder, Response},
     tokio::{fs::File as AsyncFile, io::AsyncRead},
 };
-use rocket_okapi::{gen::OpenApiGenerator, response::OpenApiResponder};
+use rocket_okapi::{
+    gen::OpenApiGenerator,
+    response::{OpenApiResponder, OpenApiResponderInner},
+};
 use temp_file_async_reader::TempFileAsyncReader;
 
 #[derive(Educe)]
@@ -289,9 +292,9 @@ impl<'r, 'o: 'r> Responder<'r, 'o> for RawResponsePro<'o> {
     }
 }
 
-impl<'r, 'o: 'r> OpenApiResponder<'r, 'o> for RawResponsePro<'o> {
-    fn responses(gen: &mut OpenApiGenerator) -> rocket_okapi::Result<Responses> {
-        let mut responses = Responses::default();
+impl<'o> OpenApiResponderInner for RawResponsePro<'o> {
+    fn responses(_gen: &mut OpenApiGenerator) -> rocket_okapi::Result<Responses> {
+        let responses = Responses::default();
 
         Ok(responses)
     }
